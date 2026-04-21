@@ -1,0 +1,11 @@
+torch
+numpy
+matplotlib
+gymnasium
+mujoco
+imageio
+imageio-ffmpeg
+pillow
+pygame
+pettingzoo==1.25.0
+mpe2

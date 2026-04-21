@@ -1,0 +1,180 @@
+{
+  "method": "shared_actor_centralized_critic",
+  "environment": "MPE2 Simple Spread",
+  "seed": 42,
+  "num_agents": 3,
+  "local_obs_dim": 18,
+  "joint_obs_dim": 54,
+  "act_dim": 5,
+  "total_updates": 20,
+  "rollout_steps": 1024,
+  "max_cycles": 25,
+  "gamma": 0.99,
+  "lam": 0.95,
+  "update_epochs": 10,
+  "hidden_dim": 64,
+  "final_avg_team_reward_last_10": -110.14334721605451,
+  "num_episodes": 273,
+  "update_history": [
+    {
+      "update": 1,
+      "buffer_size": 1026,
+      "actor_loss": 271.26571197509764,
+      "critic_loss": 187.17041473388673,
+      "entropy": 7.101240110397339,
+      "avg_team_reward_last_10": -69.37161226300914
+    },
+    {
+      "update": 2,
+      "buffer_size": 1026,
+      "actor_loss": 23.61981773376465,
+      "critic_loss": 200.88431701660156,
+      "entropy": 7.112604331970215,
+      "avg_team_reward_last_10": -78.3819029744175
+    },
+    {
+      "update": 3,
+      "buffer_size": 1026,
+      "actor_loss": 35.02621192932129,
+      "critic_loss": 262.5809295654297,
+      "entropy": 7.119185590744019,
+      "avg_team_reward_last_10": -81.02258365164182
+    },
+    {
+      "update": 4,
+      "buffer_size": 1026,
+      "actor_loss": 15.084079551696778,
+      "critic_loss": 212.78077239990233,
+      "entropy": 7.124060249328613,
+      "avg_team_reward_last_10": -81.59148067496469
+    },
+    {
+      "update": 5,
+      "buffer_size": 1026,
+      "actor_loss": 14.903092098236083,
+      "critic_loss": 195.77518463134766,
+      "entropy": 7.127314329147339,
+      "avg_team_reward_last_10": -78.16650719981008
+    },
+    {
+      "update": 6,
+      "buffer_size": 1026,
+      "actor_loss": 38.05852127075195,
+      "critic_loss": 243.35546417236327,
+      "entropy": 7.13051118850708,
+      "avg_team_reward_last_10": -88.6814473629958
+    },
+    {
+      "update": 7,
+      "buffer_size": 1026,
+      "actor_loss": 10.913933563232423,
+      "critic_loss": 181.14373474121095,
+      "entropy": 7.134727716445923,
+      "avg_team_reward_last_10": -73.36554560320076
+    },
+    {
+      "update": 8,
+      "buffer_size": 1026,
+      "actor_loss": 13.906424140930175,
+      "critic_loss": 182.8694274902344,
+      "entropy": 7.137826681137085,
+      "avg_team_reward_last_10": -75.51861647371508
+    },
+    {
+      "update": 9,
+      "buffer_size": 1026,
+      "actor_loss": 12.602449798583985,
+      "critic_loss": 240.00969696044922,
+      "entropy": 7.140440988540649,
+      "avg_team_reward_last_10": -99.57962245006459
+    },
+    {
+      "update": 10,
+      "buffer_size": 1026,
+      "actor_loss": 47.29033279418945,
+      "critic_loss": 161.3680206298828,
+      "entropy": 7.143802452087402,
+      "avg_team_reward_last_10": -81.11166510195622
+    },
+    {
+      "update": 11,
+      "buffer_size": 1026,
+      "actor_loss": 16.98242530822754,
+      "critic_loss": 211.87176208496095,
+      "entropy": 7.1483253002166744,
+      "avg_team_reward_last_10": -84.5884846535547
+    },
+    {
+      "update": 12,
+      "buffer_size": 1026,
+      "actor_loss": 7.241866540908814,
+      "critic_loss": 238.1785415649414,
+      "entropy": 7.1507683277130125,
+      "avg_team_reward_last_10": -90.53644553528103
+    },
+    {
+      "update": 13,
+      "buffer_size": 1026,
+      "actor_loss": 19.219350814819336,
+      "critic_loss": 196.8801483154297,
+      "entropy": 7.1526226043701175,
+      "avg_team_reward_last_10": -74.97674926040148
+    },
+    {
+      "update": 14,
+      "buffer_size": 1026,
+      "actor_loss": 11.65190143585205,
+      "critic_loss": 232.71110992431642,
+      "entropy": 7.155203437805175,
+      "avg_team_reward_last_10": -100.8171306226173
+    },
+    {
+      "update": 15,
+      "buffer_size": 1026,
+      "actor_loss": 11.65847635269165,
+      "critic_loss": 154.79181518554688,
+      "entropy": 7.157666492462158,
+      "avg_team_reward_last_10": -86.04039260904122
+    },
+    {
+      "update": 16,
+      "buffer_size": 1026,
+      "actor_loss": 3.6340988159179686,
+      "critic_loss": 240.42462921142578,
+      "entropy": 7.15979962348938,
+      "avg_team_reward_last_10": -110.81979139784801
+    },
+    {
+      "update": 17,
+      "buffer_size": 1026,
+      "actor_loss": 12.264345645904541,
+      "critic_loss": 215.72439422607422,
+      "entropy": 7.161087703704834,
+      "avg_team_reward_last_10": -102.768906662367
+    },
+    {
+      "update": 18,
+      "buffer_size": 1026,
+      "actor_loss": 19.767037010192873,
+      "critic_loss": 172.99949493408204,
+      "entropy": 7.162468290328979,
+      "avg_team_reward_last_10": -86.1937085757834
+    },
+    {
+      "update": 19,
+      "buffer_size": 1026,
+      "actor_loss": 2.848715043067932,
+      "critic_loss": 199.5561996459961,
+      "entropy": 7.165217065811158,
+      "avg_team_reward_last_10": -88.49559572586335
+    },
+    {
+      "update": 20,
+      "buffer_size": 1026,
+      "actor_loss": 1.8964377045631409,
+      "critic_loss": 291.5685974121094,
+      "entropy": 7.166829776763916,
+      "avg_team_reward_last_10": -110.14334721605451
+    }
+  ]
+}

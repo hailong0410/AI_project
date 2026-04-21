@@ -1,0 +1,155 @@
+{
+  "env_name": "Hopper-v5",
+  "seed": 42,
+  "total_updates": 20,
+  "rollout_steps": 1024,
+  "gamma": 0.99,
+  "lam": 0.95,
+  "update_epochs": 10,
+  "hidden_dim": 64,
+  "device": "cpu",
+  "final_avg_reward_last_10": 173.42989205547443,
+  "num_episodes": 354,
+  "update_history": [
+    {
+      "update": 1,
+      "actor_loss": 2.700002384185791,
+      "critic_loss": 33.37398719787598,
+      "entropy": 4.260824871063233,
+      "avg_reward_last_10": 7.653961311606203
+    },
+    {
+      "update": 2,
+      "actor_loss": 2.9119242429733276,
+      "critic_loss": 30.989950561523436,
+      "entropy": 4.269478702545166,
+      "avg_reward_last_10": 15.889040173362346
+    },
+    {
+      "update": 3,
+      "actor_loss": 2.94801504611969,
+      "critic_loss": 76.84028015136718,
+      "entropy": 4.277391386032105,
+      "avg_reward_last_10": 22.392649907514357
+    },
+    {
+      "update": 4,
+      "actor_loss": 1.7313644647598267,
+      "critic_loss": 412.4687835693359,
+      "entropy": 4.283380603790283,
+      "avg_reward_last_10": 70.30414527129456
+    },
+    {
+      "update": 5,
+      "actor_loss": 1.587204682826996,
+      "critic_loss": 364.0954620361328,
+      "entropy": 4.289086389541626,
+      "avg_reward_last_10": 79.90492257583978
+    },
+    {
+      "update": 6,
+      "actor_loss": 2.307462215423584,
+      "critic_loss": 520.8814544677734,
+      "entropy": 4.296706438064575,
+      "avg_reward_last_10": 110.68744351968526
+    },
+    {
+      "update": 7,
+      "actor_loss": 2.165466475486755,
+      "critic_loss": 420.6851867675781,
+      "entropy": 4.306876087188721,
+      "avg_reward_last_10": 110.30958074727752
+    },
+    {
+      "update": 8,
+      "actor_loss": 14.637733650207519,
+      "critic_loss": 493.07525634765625,
+      "entropy": 4.312308263778687,
+      "avg_reward_last_10": 117.57940486839838
+    },
+    {
+      "update": 9,
+      "actor_loss": 5.26197624206543,
+      "critic_loss": 409.00124206542966,
+      "entropy": 4.309288692474365,
+      "avg_reward_last_10": 143.76252674814145
+    },
+    {
+      "update": 10,
+      "actor_loss": 2.3616406440734865,
+      "critic_loss": 383.25263671875,
+      "entropy": 4.3098304271698,
+      "avg_reward_last_10": 97.28444356502123
+    },
+    {
+      "update": 11,
+      "actor_loss": 2.34118595123291,
+      "critic_loss": 482.4008514404297,
+      "entropy": 4.311428213119507,
+      "avg_reward_last_10": 146.45815918354995
+    },
+    {
+      "update": 12,
+      "actor_loss": 1.2951433420181275,
+      "critic_loss": 496.65208435058594,
+      "entropy": 4.313377809524536,
+      "avg_reward_last_10": 189.45218028043706
+    },
+    {
+      "update": 13,
+      "actor_loss": 1.624146831035614,
+      "critic_loss": 461.18352966308595,
+      "entropy": 4.315200996398926,
+      "avg_reward_last_10": 154.0907465941531
+    },
+    {
+      "update": 14,
+      "actor_loss": 1.958355188369751,
+      "critic_loss": 482.8128295898438,
+      "entropy": 4.31683669090271,
+      "avg_reward_last_10": 185.64917672792393
+    },
+    {
+      "update": 15,
+      "actor_loss": 2.881416368484497,
+      "critic_loss": 487.73435668945314,
+      "entropy": 4.3186290740966795,
+      "avg_reward_last_10": 217.3236247892024
+    },
+    {
+      "update": 16,
+      "actor_loss": 1.839499020576477,
+      "critic_loss": 448.5863952636719,
+      "entropy": 4.320800638198852,
+      "avg_reward_last_10": 205.53500556677326
+    },
+    {
+      "update": 17,
+      "actor_loss": 1.7266819596290588,
+      "critic_loss": 471.1721160888672,
+      "entropy": 4.322785377502441,
+      "avg_reward_last_10": 196.66511825340834
+    },
+    {
+      "update": 18,
+      "actor_loss": 1.3659357190132142,
+      "critic_loss": 373.0806182861328,
+      "entropy": 4.324878215789795,
+      "avg_reward_last_10": 147.17114501929018
+    },
+    {
+      "update": 19,
+      "actor_loss": 0.9720463335514069,
+      "critic_loss": 403.93955688476564,
+      "entropy": 4.326731634140015,
+      "avg_reward_last_10": 169.7836849171913
+    },
+    {
+      "update": 20,
+      "actor_loss": 1.9552286505699157,
+      "critic_loss": 446.18092041015626,
+      "entropy": 4.328716659545899,
+      "avg_reward_last_10": 173.42989205547443
+    }
+  ]
+}

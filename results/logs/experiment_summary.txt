@@ -1,0 +1,55 @@
+AI Final Project Experiment Summary
+============================================================
+
+Track Chosen:
+Track 2 - PPO
+
+Project Goal:
+The project reproduces PPO on a standard MuJoCo benchmark and adapts PPO to a multi-agent coordination environment.
+
+Phase 1: Reproduction
+------------------------------------------------------------
+Environment: Hopper-v5
+Algorithm: PPO
+Seeds: 42, 123, 999
+
+Hopper-v5 Results:
+Seed 42: Final average reward last 10 episodes = 173.43
+Seed 123: Final average reward last 10 episodes = 53.87
+Seed 999: Final average reward last 10 episodes = 112.27
+
+Mean: 113.19
+Std: 48.81
+
+Phase 2: Adaptation Environment
+------------------------------------------------------------
+Environment: MPE2 Simple Spread
+Number of agents: 3
+Local observation dimension: 18
+Action dimension: 5
+Task: Multi-agent coordination to cover landmarks and avoid collisions.
+
+Baseline Method:
+Naive shared-policy PPO. All agents share one policy network, and each agent uses only its own local observation. The critic is also local.
+
+Adapted Method:
+Shared actor with centralized critic. Each actor still receives local observations, but the critic receives the joint observation of all agents (18 x 3 = 54 dimensions).
+
+Simple Spread Results:
+------------------------------------------------------------
+Seed      Baseline       Adapted        Difference     
+42        -108.72        -110.14        -1.42          
+123       -152.60        -167.72        -15.12         
+999       -66.59         -87.29         -20.70         
+
+Baseline Mean: -109.30
+Baseline Std: 35.12
+Adapted Mean: -121.72
+Adapted Std: 33.84
+Mean Difference Adapted - Baseline: -12.41
+
+Interpretation:
+Because Simple Spread rewards are negative, a value closer to zero is better. In these experiments, the adapted centralized-critic version did not outperform the naive baseline under the current limited training budget. This does not mean the adaptation is invalid. The centralized critic is still a meaningful algorithmic change because it provides the critic with joint multi-agent information. However, the current result suggests that the adapted method may require longer training, hyperparameter tuning, or improved action/reward handling to show stronger performance.
+
+Ablation Explanation:
+The comparison between the baseline and adapted method serves as an ablation. The main difference is the critic input. The baseline uses a local critic, while the adapted method uses a centralized critic with joint observations. Therefore, this comparison isolates the effect of adding centralized value estimation.
