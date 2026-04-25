@@ -24,6 +24,51 @@ def save_json(data, filepath):
         json.dump(data, f, indent=2)
 
 
+def evaluate_simple_spread_adapted_deterministic(
+    agent,
+    seed=42,
+    episodes=20,
+    max_cycles=25,
+):
+    env = simple_spread_v3.parallel_env(
+        N=3,
+        local_ratio=0.5,
+        max_cycles=max_cycles,
+        continuous_actions=True,
+    )
+
+    episode_returns = []
+
+    for ep in range(episodes):
+        observations, infos = env.reset(seed=seed + 10_000 + ep)
+        agent_order = list(env.agents)
+        ep_team_reward = 0.0
+
+        while len(env.agents) > 0:
+            actions = {}
+            for agent_name in list(env.agents):
+                local_obs = observations[agent_name]
+                action = agent.select_action_deterministic(local_obs)
+                action = np.clip(action, 0.0, 1.0).astype(np.float32)
+                actions[agent_name] = action
+
+            observations, rewards, terminations, truncations, infos = env.step(actions)
+            ep_team_reward += float(sum(rewards.values()))
+
+            if all(terminations.values()) or all(truncations.values()):
+                break
+
+        episode_returns.append(ep_team_reward)
+
+    env.close()
+
+    return {
+        "mean_team_reward": float(np.mean(episode_returns)) if episode_returns else 0.0,
+        "std_team_reward": float(np.std(episode_returns)) if episode_returns else 0.0,
+        "episode_team_rewards": episode_returns,
+    }
+
+
 class MARolloutBuffer:
     """
     Rollout buffer for multi-agent PPO with centralized critic.
@@ -130,13 +175,15 @@ def build_joint_obs(observations, agent_order):
 
 def train_simple_spread_adapted(
     seed=42,
-    total_updates=20,
+    total_timesteps=1_000_000,
     rollout_steps=1024,
     max_cycles=25,
     gamma=0.99,
     lam=0.95,
     update_epochs=10,
+    minibatch_size=64,
     hidden_dim=64,
+    eval_episodes=20,
     device="cpu",
 ):
     """
@@ -157,6 +204,8 @@ def train_simple_spread_adapted(
     )
 
     observations, infos = env.reset(seed=seed)
+
+    total_updates = max(int(total_timesteps // rollout_steps), 1)
 
     agent_order = list(env.agents)
     first_agent = agent_order[0]
@@ -203,19 +252,19 @@ def train_simple_spread_adapted(
             for agent_name in active_agents:
                 local_obs = observations[agent_name]
 
-                action, log_prob, value = agent.select_action(
+                action_raw, log_prob, value = agent.select_action(
                     local_obs=local_obs,
                     joint_obs=joint_obs,
                 )
 
-                action = np.clip(action, 0.0, 1.0).astype(np.float32)
+                action = np.clip(action_raw, 0.0, 1.0).astype(np.float32)
 
                 actions[agent_name] = action
 
                 step_data[agent_name] = {
                     "local_obs": local_obs,
                     "joint_obs": joint_obs,
-                    "action": action,
+                    "action": action_raw,
                     "log_prob": log_prob,
                     "value": value,
                 }
@@ -276,7 +325,11 @@ def train_simple_spread_adapted(
         )
 
         data = buffer.get_tensors()
-        update_info = agent.update(data, update_epochs=update_epochs)
+        update_info = agent.update(
+            data,
+            update_epochs=update_epochs,
+            minibatch_size=minibatch_size,
+        )
 
         avg_recent_team_reward = (
             np.mean(team_reward_history[-10:])
@@ -328,6 +381,13 @@ def train_simple_spread_adapted(
         rewards_path,
     )
 
+    eval_result = evaluate_simple_spread_adapted_deterministic(
+        agent=agent,
+        seed=seed,
+        episodes=eval_episodes,
+        max_cycles=max_cycles,
+    )
+
     summary = {
         "method": "shared_actor_centralized_critic",
         "environment": "MPE2 Simple Spread",
@@ -336,18 +396,24 @@ def train_simple_spread_adapted(
         "local_obs_dim": local_obs_dim,
         "joint_obs_dim": joint_obs_dim,
         "act_dim": act_dim,
+        "total_timesteps": total_timesteps,
         "total_updates": total_updates,
         "rollout_steps": rollout_steps,
         "max_cycles": max_cycles,
         "gamma": gamma,
         "lam": lam,
         "update_epochs": update_epochs,
+        "minibatch_size": minibatch_size,
         "hidden_dim": hidden_dim,
+        "eval_episodes": eval_episodes,
         "final_avg_team_reward_last_10": (
             float(np.mean(team_reward_history[-10:]))
             if len(team_reward_history) > 0
             else 0.0
         ),
+        "final_eval_mean_team_reward": eval_result["mean_team_reward"],
+        "final_eval_std_team_reward": eval_result["std_team_reward"],
+        "final_eval_team_rewards": eval_result["episode_team_rewards"],
         "num_episodes": len(team_reward_history),
         "update_history": update_history,
     }
@@ -366,24 +432,25 @@ def train_simple_spread_adapted(
     print("Saved summary to:", summary_path)
     print("Saved plot to:", plot_path)
 
-    if len(team_reward_history) > 0:
-        print(
-            "Final average team reward over last 10 episodes:",
-            np.mean(team_reward_history[-10:])
-        )
+    print(
+        "Final deterministic evaluation mean team reward:",
+        f"{summary['final_eval_mean_team_reward']:.2f}",
+    )
 
-    return team_reward_history
+    return summary
 
 
 if __name__ == "__main__":
     train_simple_spread_adapted(
         seed=42,
-        total_updates=20,
+        total_timesteps=1_000_000,
         rollout_steps=1024,
         max_cycles=25,
         gamma=0.99,
         lam=0.95,
         update_epochs=10,
+        minibatch_size=64,
         hidden_dim=64,
+        eval_episodes=20,
         device="cpu",
     )

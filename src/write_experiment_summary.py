@@ -38,7 +38,9 @@ def main():
             f"simple_spread_baseline_summary_seed_{seed}.json"
         )
         data = load_json(path)
-        baseline_scores.append(data["final_avg_team_reward_last_10"])
+        baseline_scores.append(
+            data.get("final_eval_mean_team_reward", data["final_avg_team_reward_last_10"])
+        )
 
     baseline_mean = np.mean(baseline_scores)
     baseline_std = np.std(baseline_scores)
@@ -54,7 +56,9 @@ def main():
             f"simple_spread_adapted_summary_seed_{seed}.json"
         )
         data = load_json(path)
-        adapted_scores.append(data["final_avg_team_reward_last_10"])
+        adapted_scores.append(
+            data.get("final_eval_mean_team_reward", data["final_avg_team_reward_last_10"])
+        )
 
     adapted_mean = np.mean(adapted_scores)
     adapted_std = np.std(adapted_scores)

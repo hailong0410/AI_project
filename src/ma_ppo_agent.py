@@ -47,6 +47,10 @@ class SharedActor(nn.Module):
         dist = self.get_dist(local_obs)
         return dist.entropy().sum(dim=-1)
 
+    def act_deterministic(self, local_obs):
+        mean, _ = self.forward(local_obs)
+        return mean
+
 
 class CentralizedCritic(nn.Module):
     """
@@ -119,10 +123,17 @@ class MAPPOAgent:
         log_prob = log_prob.squeeze(0)
         value = value.squeeze(0)
 
-        # Simple Spread action space is [0, 1]
-        action_clipped = torch.clamp(action, 0.0, 1.0)
+        return action.cpu().numpy(), log_prob.item(), value.item()
 
-        return action_clipped.cpu().numpy(), log_prob.item(), value.item()
+    def select_action_deterministic(self, local_obs):
+        local_obs_tensor = torch.tensor(
+            local_obs, dtype=torch.float32, device=self.device
+        ).unsqueeze(0)
+
+        with torch.no_grad():
+            action = self.actor.act_deterministic(local_obs_tensor)
+
+        return action.squeeze(0).cpu().numpy()
 
     def get_value(self, joint_obs):
         joint_obs_tensor = torch.tensor(
@@ -134,7 +145,7 @@ class MAPPOAgent:
 
         return value.item()
 
-    def update(self, data, update_epochs=10):
+    def update(self, data, update_epochs=10, minibatch_size=64):
         local_obs = data["local_obs"]
         joint_obs = data["joint_obs"]
         actions = data["actions"]
@@ -147,43 +158,62 @@ class MAPPOAgent:
         actor_loss_value = 0.0
         critic_loss_value = 0.0
         entropy_value = 0.0
+        minibatch_count = 0
+
+        batch_size = local_obs.shape[0]
+        indices = torch.arange(batch_size, device=self.device)
 
         for _ in range(update_epochs):
-            new_log_probs = self.actor.get_log_prob(local_obs, actions)
+            perm = indices[torch.randperm(batch_size, device=self.device)]
 
-            ratio = torch.exp(new_log_probs - old_log_probs)
+            for start in range(0, batch_size, minibatch_size):
+                mb_idx = perm[start : start + minibatch_size]
 
-            surr1 = ratio * advantages
-            surr2 = torch.clamp(
-                ratio,
-                1.0 - self.clip_eps,
-                1.0 + self.clip_eps
-            ) * advantages
+                mb_local_obs = local_obs[mb_idx]
+                mb_joint_obs = joint_obs[mb_idx]
+                mb_actions = actions[mb_idx]
+                mb_old_log_probs = old_log_probs[mb_idx]
+                mb_advantages = advantages[mb_idx]
+                mb_returns = returns[mb_idx]
 
-            actor_loss = -torch.min(surr1, surr2).mean()
+                new_log_probs = self.actor.get_log_prob(mb_local_obs, mb_actions)
 
-            values = self.critic(joint_obs)
-            critic_loss = nn.MSELoss()(values, returns)
+                ratio = torch.exp(new_log_probs - mb_old_log_probs)
 
-            entropy = self.actor.get_entropy(local_obs).mean()
+                surr1 = ratio * mb_advantages
+                surr2 = torch.clamp(
+                    ratio,
+                    1.0 - self.clip_eps,
+                    1.0 + self.clip_eps
+                ) * mb_advantages
 
-            total_actor_loss = actor_loss - self.entropy_coef * entropy
-            total_critic_loss = self.value_coef * critic_loss
+                actor_loss = -torch.min(surr1, surr2).mean()
 
-            self.actor_optimizer.zero_grad()
-            total_actor_loss.backward()
-            self.actor_optimizer.step()
+                values = self.critic(mb_joint_obs)
+                critic_loss = nn.MSELoss()(values, mb_returns)
 
-            self.critic_optimizer.zero_grad()
-            total_critic_loss.backward()
-            self.critic_optimizer.step()
+                entropy = self.actor.get_entropy(mb_local_obs).mean()
 
-            actor_loss_value += actor_loss.item()
-            critic_loss_value += critic_loss.item()
-            entropy_value += entropy.item()
+                total_actor_loss = actor_loss - self.entropy_coef * entropy
+                total_critic_loss = self.value_coef * critic_loss
+
+                self.actor_optimizer.zero_grad()
+                total_actor_loss.backward()
+                self.actor_optimizer.step()
+
+                self.critic_optimizer.zero_grad()
+                total_critic_loss.backward()
+                self.critic_optimizer.step()
+
+                actor_loss_value += actor_loss.item()
+                critic_loss_value += critic_loss.item()
+                entropy_value += entropy.item()
+                minibatch_count += 1
+
+        denom = max(minibatch_count, 1)
 
         return {
-            "actor_loss": actor_loss_value / update_epochs,
-            "critic_loss": critic_loss_value / update_epochs,
-            "entropy": entropy_value / update_epochs,
+            "actor_loss": actor_loss_value / denom,
+            "critic_loss": critic_loss_value / denom,
+            "entropy": entropy_value / denom,
         }

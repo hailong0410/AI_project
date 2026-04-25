@@ -39,8 +39,14 @@ def main():
         baseline_data = load_json(baseline_path)
         adapted_data = load_json(adapted_path)
 
-        baseline_score = baseline_data["final_avg_team_reward_last_10"]
-        adapted_score = adapted_data["final_avg_team_reward_last_10"]
+        baseline_score = baseline_data.get(
+            "final_eval_mean_team_reward",
+            baseline_data["final_avg_team_reward_last_10"],
+        )
+        adapted_score = adapted_data.get(
+            "final_eval_mean_team_reward",
+            adapted_data["final_avg_team_reward_last_10"],
+        )
 
         baseline_scores.append(baseline_score)
         adapted_scores.append(adapted_score)
@@ -96,7 +102,7 @@ def main():
     plt.bar(x + width / 2, adapted_scores, width, label="Adapted PPO")
 
     plt.xlabel("Seed")
-    plt.ylabel("Final Average Team Reward Last 10 Episodes")
+    plt.ylabel("Final Deterministic Evaluation Mean Team Reward")
     plt.title("Simple Spread: Baseline PPO vs Adapted PPO")
     plt.xticks(x, [str(seed) for seed in seeds])
     plt.legend()
@@ -118,7 +124,7 @@ def main():
 
     plt.figure(figsize=(8, 6))
     plt.bar(methods, means, yerr=stds, capsize=8)
-    plt.ylabel("Mean Final Average Team Reward")
+    plt.ylabel("Mean Final Deterministic Evaluation Team Reward")
     plt.title("Simple Spread: Mean Performance Across 3 Seeds")
     plt.tight_layout()
 
