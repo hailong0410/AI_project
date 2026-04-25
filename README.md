@@ -20,9 +20,6 @@ Project_AI/
 ├── README.md
 ├── requirements.txt
 ├── .gitignore
-├── configs/
-├── notes/
-├── report/
 ├── results/
 │   ├── logs/
 │   └── plots/
@@ -41,7 +38,8 @@ Project_AI/
     ├── train_simple_spread_adapted.py
     ├── run_simple_spread_adapted_seeds.py
     ├── compare_simple_spread_results.py
-    └── write_experiment_summary.py
+    ├── write_experiment_summary.py
+    └── test_*.py
 ```
 
 ---
@@ -51,9 +49,7 @@ Project_AI/
 - `src/`: contains all source code for training, testing, and evaluation.
 - `results/logs/`: contains saved JSON logs and experiment summaries.
 - `results/plots/`: contains saved training plots and comparison plots.
-- `report/`: contains report drafts or final report files.
-- `configs/`: contains experiment configuration notes or parameter settings.
-- `notes/`: contains project notes and planning documents.
+- `src/test_*.py`: contains unit tests and environment smoke tests.
 
 ---
 
