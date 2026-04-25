@@ -1,8 +1,8 @@
 import gymnasium as gym
+import math
 import numpy as np
 import torch
 
-from buffer import RolloutBuffer
 from ppo_agent import PPOAgent
 from utils import save_rewards_to_json, save_training_summary, plot_rewards
 
@@ -12,11 +12,26 @@ def set_seed(seed=42):
     torch.manual_seed(seed)
 
 
+def make_vec_env(env_name, num_envs, seed):
+    def make_single_env(rank):
+        def thunk():
+            env = gym.make(env_name)
+            env.reset(seed=seed + rank)
+            env.action_space.seed(seed + rank)
+            env.observation_space.seed(seed + rank)
+            return env
+
+        return thunk
+
+    return gym.vector.AsyncVectorEnv([make_single_env(i) for i in range(num_envs)])
+
+
 def train_ppo_on_hopper(
     env_name="Hopper-v5",
     seed=42,
     total_timesteps=1_000_000,
     rollout_steps=2048,
+    num_envs=1,
     minibatch_size=64,
     gamma=0.99,
     lam=0.95,
@@ -26,20 +41,30 @@ def train_ppo_on_hopper(
     device="cpu",
 ):
     set_seed(seed)
+    torch_device = torch.device(device)
 
-    env = gym.make(env_name)
-    obs, info = env.reset(seed=seed)
-    env.action_space.seed(seed)
-    env.observation_space.seed(seed)
+    envs = make_vec_env(env_name=env_name, num_envs=num_envs, seed=seed)
+    obs_np, info = envs.reset(seed=seed)
+    obs = torch.as_tensor(obs_np, dtype=torch.float32, device=torch_device)
 
     total_updates = max(int(total_timesteps // rollout_steps), 1)
+    steps_per_env = math.ceil(rollout_steps / num_envs)
+    collected_batch_size = steps_per_env * num_envs
 
-    obs_dim = env.observation_space.shape[0]
-    act_dim = env.action_space.shape[0]
+    obs_shape = envs.single_observation_space.shape
+    act_shape = envs.single_action_space.shape
+    if len(obs_shape) != 1 or len(act_shape) != 1:
+        raise ValueError("This trainer supports 1D Box observation/action spaces only.")
+
+    obs_dim = obs_shape[0]
+    act_dim = act_shape[0]
 
     print(f"Environment: {env_name}")
     print(f"Observation dim: {obs_dim}")
     print(f"Action dim: {act_dim}")
+    print(f"Num envs: {num_envs}")
+    print(f"Rollout steps per update (effective): {rollout_steps}")
+    print(f"Rollout steps per env: {steps_per_env}")
     print(f"Device: {device}")
 
     agent = PPOAgent(
@@ -47,56 +72,107 @@ def train_ppo_on_hopper(
         act_dim=act_dim,
         hidden_dim=hidden_dim,
         lr=lr,
-        max_grad_norm=max_grad_norm,
         device=device,
     )
 
-    episode_reward = 0.0
-    episode_length = 0
+    current_ep_returns = np.zeros(num_envs, dtype=np.float64)
+    current_ep_lengths = np.zeros(num_envs, dtype=np.int64)
     episode_count = 0
 
     reward_history = []
     update_history = []
 
+    obs_buf = torch.zeros((steps_per_env, num_envs, obs_dim), dtype=torch.float32, device=torch_device)
+    actions_buf = torch.zeros((steps_per_env, num_envs, act_dim), dtype=torch.float32, device=torch_device)
+    logprobs_buf = torch.zeros((steps_per_env, num_envs), dtype=torch.float32, device=torch_device)
+    rewards_buf = torch.zeros((steps_per_env, num_envs), dtype=torch.float32, device=torch_device)
+    dones_buf = torch.zeros((steps_per_env, num_envs), dtype=torch.float32, device=torch_device)
+    values_buf = torch.zeros((steps_per_env, num_envs), dtype=torch.float32, device=torch_device)
+
+    act_low = envs.single_action_space.low
+    act_high = envs.single_action_space.high
+
     for update_idx in range(1, total_updates + 1):
-        buffer = RolloutBuffer(device=device)
+        for t in range(steps_per_env):
+            obs_buf[t] = obs
 
-        for step in range(rollout_steps):
-            action, log_prob, value = agent.select_action(obs)
-            action_for_env = np.clip(action, env.action_space.low, env.action_space.high)
+            with torch.no_grad():
+                actions, log_probs, values = agent.ac.step(obs)
 
-            next_obs, reward, terminated, truncated, info = env.step(action_for_env)
-            done = terminated or truncated
+            actions_buf[t] = actions
+            logprobs_buf[t] = log_probs
+            values_buf[t] = values
 
-            buffer.add(obs, action, reward, done, value, log_prob)
+            action_np = np.clip(actions.cpu().numpy(), act_low, act_high)
+            next_obs_np, reward_np, terminated_np, truncated_np, info = envs.step(action_np)
+            done_np = np.logical_or(terminated_np, truncated_np)
 
-            episode_reward += reward
-            episode_length += 1
-            obs = next_obs
+            rewards_buf[t] = torch.as_tensor(reward_np, dtype=torch.float32, device=torch_device)
+            dones_buf[t] = torch.as_tensor(done_np, dtype=torch.float32, device=torch_device)
 
-            if done:
-                reward_history.append(float(episode_reward))
-                episode_count += 1
+            current_ep_returns += reward_np
+            current_ep_lengths += 1
 
-                print(
-                    f"[Update {update_idx:03d}] "
-                    f"Episode {episode_count:03d} | "
-                    f"Reward: {episode_reward:.2f} | "
-                    f"Length: {episode_length}"
-                )
+            for i in range(num_envs):
+                if done_np[i]:
+                    episode_count += 1
+                    ep_reward = float(current_ep_returns[i])
+                    ep_length = int(current_ep_lengths[i])
+                    reward_history.append(ep_reward)
 
-                obs, info = env.reset()
-                episode_reward = 0.0
-                episode_length = 0
+                    print(
+                        f"[Update {update_idx:03d}] "
+                        f"Episode {episode_count:03d} | "
+                        f"Reward: {ep_reward:.2f} | "
+                        f"Length: {ep_length}"
+                    )
 
-        last_value = agent.get_value(obs)
-        buffer.compute_advantages_and_returns(
-            last_value=last_value,
-            gamma=gamma,
-            lam=lam,
-        )
+                    current_ep_returns[i] = 0.0
+                    current_ep_lengths[i] = 0
 
-        data = buffer.get_tensors()
+            obs = torch.as_tensor(next_obs_np, dtype=torch.float32, device=torch_device)
+
+        with torch.no_grad():
+            next_value = agent.ac.critic(obs)
+
+        advantages = torch.zeros_like(rewards_buf, device=torch_device)
+        lastgaelam = torch.zeros(num_envs, dtype=torch.float32, device=torch_device)
+
+        for t in reversed(range(steps_per_env)):
+            if t == steps_per_env - 1:
+                next_non_terminal = 1.0 - dones_buf[t]
+                next_values = next_value
+            else:
+                next_non_terminal = 1.0 - dones_buf[t]
+                next_values = values_buf[t + 1]
+
+            delta = rewards_buf[t] + gamma * next_values * next_non_terminal - values_buf[t]
+            lastgaelam = delta + gamma * lam * next_non_terminal * lastgaelam
+            advantages[t] = lastgaelam
+
+        returns = advantages + values_buf
+
+        b_obs = obs_buf.reshape((-1, obs_dim))
+        b_actions = actions_buf.reshape((-1, act_dim))
+        b_log_probs = logprobs_buf.reshape(-1)
+        b_advantages = advantages.reshape(-1)
+        b_returns = returns.reshape(-1)
+
+        if collected_batch_size > rollout_steps:
+            b_obs = b_obs[:rollout_steps]
+            b_actions = b_actions[:rollout_steps]
+            b_log_probs = b_log_probs[:rollout_steps]
+            b_advantages = b_advantages[:rollout_steps]
+            b_returns = b_returns[:rollout_steps]
+
+        data = {
+            "obs": b_obs,
+            "actions": b_actions,
+            "log_probs": b_log_probs,
+            "advantages": b_advantages,
+            "returns": b_returns,
+        }
+
         update_info = agent.update(
             data,
             update_epochs=update_epochs,
@@ -115,7 +191,7 @@ def train_ppo_on_hopper(
 
         print(
             f"=== PPO Update {update_idx:03d}/{total_updates} ===\n"
-            f"Buffer size: {buffer.size()} | "
+            f"Buffer size: {rollout_steps} | "
             f"Actor loss: {update_info['actor_loss']:.4f} | "
             f"Critic loss: {update_info['critic_loss']:.4f} | "
             f"Entropy: {update_info['entropy']:.4f} | "
@@ -134,6 +210,8 @@ def train_ppo_on_hopper(
         "total_timesteps": total_timesteps,
         "total_updates": total_updates,
         "rollout_steps": rollout_steps,
+        "num_envs": num_envs,
+        "rollout_steps_per_env": steps_per_env,
         "minibatch_size": minibatch_size,
         "gamma": gamma,
         "lam": lam,
@@ -155,7 +233,7 @@ def train_ppo_on_hopper(
         title=f"PPO on {env_name} (seed={seed})"
     )
 
-    env.close()
+    envs.close()
     return reward_history
 
 
@@ -165,6 +243,7 @@ if __name__ == "__main__":
         seed=42,
         total_timesteps=1_000_000,
         rollout_steps=2048,
+        num_envs=1,
         minibatch_size=64,
         gamma=0.99,
         lam=0.95,

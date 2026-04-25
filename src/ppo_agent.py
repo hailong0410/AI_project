@@ -21,7 +21,6 @@ class PPOAgent:
         self.clip_eps = clip_eps
         self.value_coef = value_coef
         self.entropy_coef = entropy_coef
-        self.max_grad_norm = max_grad_norm
 
         self.ac = ActorCritic(obs_dim, act_dim, hidden_dim).to(self.device)
 

@@ -16,6 +16,7 @@ def main():
             seed=seed,
             total_timesteps=1_000_000,
             rollout_steps=2048,
+            num_envs=8,
             minibatch_size=64,
             gamma=0.99,
             lam=0.95,
