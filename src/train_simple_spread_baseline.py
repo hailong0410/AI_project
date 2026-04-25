@@ -1,5 +1,6 @@
 import os
 import json
+import math
 import numpy as np
 import torch
 
@@ -77,6 +78,7 @@ def train_simple_spread_baseline(
     seed=42,
     total_timesteps=1_000_000,
     rollout_steps=1024,
+    num_envs=1,
     max_cycles=25,
     gamma=0.99,
     lam=0.95,
@@ -98,27 +100,40 @@ def train_simple_spread_baseline(
 
     set_seed(seed)
 
-    env = simple_spread_v3.parallel_env(
-        N=3,
-        local_ratio=0.5,
-        max_cycles=max_cycles,
-        continuous_actions=True,
-    )
+    envs = []
+    observations_list = []
+    infos_list = []
 
-    observations, infos = env.reset(seed=seed)
+    for env_idx in range(num_envs):
+        env = simple_spread_v3.parallel_env(
+            N=3,
+            local_ratio=0.5,
+            max_cycles=max_cycles,
+            continuous_actions=True,
+        )
+        observations, infos = env.reset(seed=seed + env_idx)
+        envs.append(env)
+        observations_list.append(observations)
+        infos_list.append(infos)
 
     total_updates = max(int(total_timesteps // rollout_steps), 1)
+    steps_per_env = math.ceil(rollout_steps / num_envs)
+    collected_batch_size = steps_per_env * num_envs
 
-    agents = env.agents
+    ref_env = envs[0]
+    agents = ref_env.agents
     first_agent = agents[0]
 
-    obs_dim = env.observation_space(first_agent).shape[0]
-    act_dim = env.action_space(first_agent).shape[0]
+    obs_dim = ref_env.observation_space(first_agent).shape[0]
+    act_dim = ref_env.action_space(first_agent).shape[0]
 
     print("Environment: MPE2 Simple Spread")
     print("Agents:", agents)
     print("Observation dim:", obs_dim)
     print("Action dim:", act_dim)
+    print("Num envs:", num_envs)
+    print("Rollout steps per update (effective):", rollout_steps)
+    print("Rollout steps per env:", steps_per_env)
     print("Device:", device)
 
     # Shared PPO agent used by all environment agents
@@ -132,96 +147,128 @@ def train_simple_spread_baseline(
     team_reward_history = []
     update_history = []
 
-    episode_team_reward = 0.0
+    episode_team_rewards = np.zeros(num_envs, dtype=np.float64)
+    episode_steps = np.zeros(num_envs, dtype=np.int64)
     episode_count = 0
-    episode_step = 0
 
     for update_idx in range(1, total_updates + 1):
-        buffer = RolloutBuffer(device=device)
+        buffers = [RolloutBuffer(device=device) for _ in range(num_envs)]
 
-        steps_collected = 0
+        for _ in range(steps_per_env):
+            for env_idx, env in enumerate(envs):
+                observations = observations_list[env_idx]
+                active_agents = list(env.agents)
 
-        while steps_collected < rollout_steps:
-            actions = {}
-            step_data = {}
+                if len(active_agents) == 0:
+                    observations, infos = env.reset()
+                    observations_list[env_idx] = observations
+                    infos_list[env_idx] = infos
+                    active_agents = list(env.agents)
 
-            active_agents = list(env.agents)
+                actions = {}
+                step_data = {}
 
-            for agent_name in active_agents:
-                obs = observations[agent_name]
+                for agent_name in active_agents:
+                    obs = observations[agent_name]
 
-                action_raw, log_prob, value = ppo_agent.select_action(obs)
+                    action_raw, log_prob, value = ppo_agent.select_action(obs)
 
-                # Simple Spread continuous action space is Box(0.0, 1.0, shape=(5,))
-                action = np.clip(action_raw, 0.0, 1.0).astype(np.float32)
+                    # Simple Spread continuous action space is Box(0.0, 1.0, shape=(5,))
+                    action = np.clip(action_raw, 0.0, 1.0).astype(np.float32)
 
-                actions[agent_name] = action
+                    actions[agent_name] = action
 
-                step_data[agent_name] = {
-                    "obs": obs,
-                    "action": action_raw,
-                    "log_prob": log_prob,
-                    "value": value,
-                }
+                    step_data[agent_name] = {
+                        "obs": obs,
+                        "action": action_raw,
+                        "log_prob": log_prob,
+                        "value": value,
+                    }
 
-            next_observations, rewards, terminations, truncations, infos = env.step(actions)
+                next_observations, rewards, terminations, truncations, infos = env.step(actions)
 
-            team_step_reward = 0.0
+                team_step_reward = 0.0
 
-            for agent_name in active_agents:
-                reward = rewards[agent_name]
-                done = terminations[agent_name] or truncations[agent_name]
+                for agent_name in active_agents:
+                    reward = rewards[agent_name]
+                    done = terminations[agent_name] or truncations[agent_name]
 
-                buffer.add(
-                    obs=step_data[agent_name]["obs"],
-                    action=step_data[agent_name]["action"],
-                    reward=reward,
-                    done=done,
-                    value=step_data[agent_name]["value"],
-                    log_prob=step_data[agent_name]["log_prob"],
-                )
+                    buffers[env_idx].add(
+                        obs=step_data[agent_name]["obs"],
+                        action=step_data[agent_name]["action"],
+                        reward=reward,
+                        done=done,
+                        value=step_data[agent_name]["value"],
+                        log_prob=step_data[agent_name]["log_prob"],
+                    )
 
-                team_step_reward += reward
-                steps_collected += 1
+                    team_step_reward += reward
 
-            episode_team_reward += team_step_reward
-            episode_step += 1
+                episode_team_rewards[env_idx] += team_step_reward
+                episode_steps[env_idx] += 1
 
-            observations = next_observations
+                observations_list[env_idx] = next_observations
+                infos_list[env_idx] = infos
 
-            all_done = all(terminations.values()) or all(truncations.values())
+                all_done = all(terminations.values()) or all(truncations.values())
 
-            if all_done:
-                episode_count += 1
-                team_reward_history.append(float(episode_team_reward))
+                if all_done:
+                    episode_count += 1
+                    ep_reward = float(episode_team_rewards[env_idx])
+                    ep_steps = int(episode_steps[env_idx])
+                    team_reward_history.append(ep_reward)
 
-                print(
-                    f"[Update {update_idx:03d}] "
-                    f"Episode {episode_count:03d} | "
-                    f"Team reward: {episode_team_reward:.2f} | "
-                    f"Steps: {episode_step}"
-                )
+                    print(
+                        f"[Update {update_idx:03d}] "
+                        f"Episode {episode_count:03d} | "
+                        f"Team reward: {ep_reward:.2f} | "
+                        f"Steps: {ep_steps}"
+                    )
 
-                observations, infos = env.reset()
-                episode_team_reward = 0.0
-                episode_step = 0
+                    observations, infos = env.reset()
+                    observations_list[env_idx] = observations
+                    infos_list[env_idx] = infos
+                    episode_team_rewards[env_idx] = 0.0
+                    episode_steps[env_idx] = 0
 
-        # Estimate last value using the first active agent's observation.
-        # This is a simple baseline approximation.
-        if len(env.agents) > 0:
-            last_agent = env.agents[0]
-            last_obs = observations[last_agent]
-            last_value = ppo_agent.get_value(last_obs)
-        else:
-            last_value = 0.0
+        buffer_tensors = []
+        for env_idx, env in enumerate(envs):
+            observations = observations_list[env_idx]
 
-        buffer.compute_advantages_and_returns(
-            last_value=last_value,
-            gamma=gamma,
-            lam=lam,
-        )
+            # Estimate last value using the first active agent's observation.
+            # This is a simple baseline approximation.
+            if len(env.agents) > 0:
+                last_agent = env.agents[0]
+                last_obs = observations[last_agent]
+                last_value = ppo_agent.get_value(last_obs)
+            else:
+                last_value = 0.0
 
-        data = buffer.get_tensors()
+            buffers[env_idx].compute_advantages_and_returns(
+                last_value=last_value,
+                gamma=gamma,
+                lam=lam,
+            )
+            buffer_tensors.append(buffers[env_idx].get_tensors())
+
+        data = {
+            "obs": torch.cat([x["obs"] for x in buffer_tensors], dim=0),
+            "actions": torch.cat([x["actions"] for x in buffer_tensors], dim=0),
+            "log_probs": torch.cat([x["log_probs"] for x in buffer_tensors], dim=0),
+            "advantages": torch.cat([x["advantages"] for x in buffer_tensors], dim=0),
+            "returns": torch.cat([x["returns"] for x in buffer_tensors], dim=0),
+        }
+
+        if collected_batch_size > rollout_steps:
+            data = {
+                "obs": data["obs"][:rollout_steps],
+                "actions": data["actions"][:rollout_steps],
+                "log_probs": data["log_probs"][:rollout_steps],
+                "advantages": data["advantages"][:rollout_steps],
+                "returns": data["returns"][:rollout_steps],
+            }
+
+        effective_buffer_size = int(data["obs"].shape[0])
         update_info = ppo_agent.update(
             data,
             update_epochs=update_epochs,
@@ -236,7 +283,7 @@ def train_simple_spread_baseline(
 
         update_history.append({
             "update": update_idx,
-            "buffer_size": buffer.size(),
+            "buffer_size": effective_buffer_size,
             "actor_loss": float(update_info["actor_loss"]),
             "critic_loss": float(update_info["critic_loss"]),
             "entropy": float(update_info["entropy"]),
@@ -245,14 +292,15 @@ def train_simple_spread_baseline(
 
         print(
             f"=== Baseline PPO Update {update_idx:03d}/{total_updates} ===\n"
-            f"Buffer size: {buffer.size()} | "
+            f"Buffer size: {effective_buffer_size} | "
             f"Actor loss: {update_info['actor_loss']:.4f} | "
             f"Critic loss: {update_info['critic_loss']:.4f} | "
             f"Entropy: {update_info['entropy']:.4f} | "
             f"Avg team reward (last 10 eps): {avg_recent_team_reward:.2f}\n"
         )
 
-    env.close()
+    for env in envs:
+        env.close()
 
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     logs_dir = os.path.join(project_root, "results", "logs")
@@ -296,6 +344,8 @@ def train_simple_spread_baseline(
         "total_timesteps": total_timesteps,
         "total_updates": total_updates,
         "rollout_steps": rollout_steps,
+        "num_envs": num_envs,
+        "rollout_steps_per_env": steps_per_env,
         "max_cycles": max_cycles,
         "gamma": gamma,
         "lam": lam,
@@ -342,6 +392,7 @@ if __name__ == "__main__":
         seed=42,
         total_timesteps=1_000_000,
         rollout_steps=1024,
+        num_envs=8,
         max_cycles=25,
         gamma=0.99,
         lam=0.95,

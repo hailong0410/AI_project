@@ -1,5 +1,6 @@
 import os
 import json
+import math
 import numpy as np
 import torch
 
@@ -177,6 +178,7 @@ def train_simple_spread_adapted(
     seed=42,
     total_timesteps=1_000_000,
     rollout_steps=1024,
+    num_envs=1,
     max_cycles=25,
     gamma=0.99,
     lam=0.95,
@@ -196,22 +198,34 @@ def train_simple_spread_adapted(
 
     set_seed(seed)
 
-    env = simple_spread_v3.parallel_env(
-        N=3,
-        local_ratio=0.5,
-        max_cycles=max_cycles,
-        continuous_actions=True,
-    )
+    envs = []
+    observations_list = []
+    infos_list = []
+    agent_orders = []
 
-    observations, infos = env.reset(seed=seed)
+    for env_idx in range(num_envs):
+        env = simple_spread_v3.parallel_env(
+            N=3,
+            local_ratio=0.5,
+            max_cycles=max_cycles,
+            continuous_actions=True,
+        )
+        observations, infos = env.reset(seed=seed + env_idx)
+        envs.append(env)
+        observations_list.append(observations)
+        infos_list.append(infos)
+        agent_orders.append(list(env.agents))
 
     total_updates = max(int(total_timesteps // rollout_steps), 1)
+    steps_per_env = math.ceil(rollout_steps / num_envs)
+    collected_batch_size = steps_per_env * num_envs
 
-    agent_order = list(env.agents)
+    ref_env = envs[0]
+    agent_order = agent_orders[0]
     first_agent = agent_order[0]
 
-    local_obs_dim = env.observation_space(first_agent).shape[0]
-    act_dim = env.action_space(first_agent).shape[0]
+    local_obs_dim = ref_env.observation_space(first_agent).shape[0]
+    act_dim = ref_env.action_space(first_agent).shape[0]
     joint_obs_dim = local_obs_dim * len(agent_order)
 
     print("Environment: MPE2 Simple Spread")
@@ -220,6 +234,9 @@ def train_simple_spread_adapted(
     print("Local observation dim:", local_obs_dim)
     print("Joint observation dim:", joint_obs_dim)
     print("Action dim:", act_dim)
+    print("Num envs:", num_envs)
+    print("Rollout steps per update (effective):", rollout_steps)
+    print("Rollout steps per env:", steps_per_env)
     print("Device:", device)
 
     agent = MAPPOAgent(
@@ -233,98 +250,131 @@ def train_simple_spread_adapted(
     team_reward_history = []
     update_history = []
 
-    episode_team_reward = 0.0
+    episode_team_rewards = np.zeros(num_envs, dtype=np.float64)
+    episode_steps = np.zeros(num_envs, dtype=np.int64)
     episode_count = 0
-    episode_step = 0
 
     for update_idx in range(1, total_updates + 1):
-        buffer = MARolloutBuffer(device=device)
+        buffers = [MARolloutBuffer(device=device) for _ in range(num_envs)]
 
-        steps_collected = 0
+        for _ in range(steps_per_env):
+            for env_idx, env in enumerate(envs):
+                observations = observations_list[env_idx]
+                active_agents = list(env.agents)
 
-        while steps_collected < rollout_steps:
-            actions = {}
-            step_data = {}
+                if len(active_agents) == 0:
+                    observations, infos = env.reset()
+                    observations_list[env_idx] = observations
+                    infos_list[env_idx] = infos
+                    active_agents = list(env.agents)
 
-            active_agents = list(env.agents)
-            joint_obs = build_joint_obs(observations, agent_order)
+                env_agent_order = agent_orders[env_idx]
+                joint_obs = build_joint_obs(observations, env_agent_order)
 
-            for agent_name in active_agents:
-                local_obs = observations[agent_name]
+                actions = {}
+                step_data = {}
 
-                action_raw, log_prob, value = agent.select_action(
-                    local_obs=local_obs,
-                    joint_obs=joint_obs,
-                )
+                for agent_name in active_agents:
+                    local_obs = observations[agent_name]
 
-                action = np.clip(action_raw, 0.0, 1.0).astype(np.float32)
+                    action_raw, log_prob, value = agent.select_action(
+                        local_obs=local_obs,
+                        joint_obs=joint_obs,
+                    )
 
-                actions[agent_name] = action
+                    action = np.clip(action_raw, 0.0, 1.0).astype(np.float32)
+                    actions[agent_name] = action
 
-                step_data[agent_name] = {
-                    "local_obs": local_obs,
-                    "joint_obs": joint_obs,
-                    "action": action_raw,
-                    "log_prob": log_prob,
-                    "value": value,
-                }
+                    step_data[agent_name] = {
+                        "local_obs": local_obs,
+                        "joint_obs": joint_obs,
+                        "action": action_raw,
+                        "log_prob": log_prob,
+                        "value": value,
+                    }
 
-            next_observations, rewards, terminations, truncations, infos = env.step(actions)
+                next_observations, rewards, terminations, truncations, infos = env.step(actions)
 
-            team_step_reward = 0.0
+                team_step_reward = 0.0
+                for agent_name in active_agents:
+                    reward = rewards[agent_name]
+                    done = terminations[agent_name] or truncations[agent_name]
 
-            for agent_name in active_agents:
-                reward = rewards[agent_name]
-                done = terminations[agent_name] or truncations[agent_name]
+                    buffers[env_idx].add(
+                        local_obs=step_data[agent_name]["local_obs"],
+                        joint_obs=step_data[agent_name]["joint_obs"],
+                        action=step_data[agent_name]["action"],
+                        reward=reward,
+                        done=done,
+                        value=step_data[agent_name]["value"],
+                        log_prob=step_data[agent_name]["log_prob"],
+                    )
 
-                buffer.add(
-                    local_obs=step_data[agent_name]["local_obs"],
-                    joint_obs=step_data[agent_name]["joint_obs"],
-                    action=step_data[agent_name]["action"],
-                    reward=reward,
-                    done=done,
-                    value=step_data[agent_name]["value"],
-                    log_prob=step_data[agent_name]["log_prob"],
-                )
+                    team_step_reward += reward
 
-                team_step_reward += reward
-                steps_collected += 1
+                episode_team_rewards[env_idx] += team_step_reward
+                episode_steps[env_idx] += 1
 
-            episode_team_reward += team_step_reward
-            episode_step += 1
+                observations_list[env_idx] = next_observations
+                infos_list[env_idx] = infos
 
-            observations = next_observations
+                all_done = all(terminations.values()) or all(truncations.values())
+                if all_done:
+                    episode_count += 1
+                    ep_reward = float(episode_team_rewards[env_idx])
+                    ep_steps = int(episode_steps[env_idx])
+                    team_reward_history.append(ep_reward)
 
-            all_done = all(terminations.values()) or all(truncations.values())
+                    print(
+                        f"[Update {update_idx:03d}] "
+                        f"Episode {episode_count:03d} | "
+                        f"Team reward: {ep_reward:.2f} | "
+                        f"Steps: {ep_steps}"
+                    )
 
-            if all_done:
-                episode_count += 1
-                team_reward_history.append(float(episode_team_reward))
+                    observations, infos = env.reset()
+                    observations_list[env_idx] = observations
+                    infos_list[env_idx] = infos
+                    episode_team_rewards[env_idx] = 0.0
+                    episode_steps[env_idx] = 0
 
-                print(
-                    f"[Update {update_idx:03d}] "
-                    f"Episode {episode_count:03d} | "
-                    f"Team reward: {episode_team_reward:.2f} | "
-                    f"Steps: {episode_step}"
-                )
+        buffer_tensors = []
+        for env_idx, env in enumerate(envs):
+            observations = observations_list[env_idx]
+            if len(env.agents) > 0:
+                env_agent_order = agent_orders[env_idx]
+                last_joint_obs = build_joint_obs(observations, env_agent_order)
+                last_value = agent.get_value(last_joint_obs)
+            else:
+                last_value = 0.0
 
-                observations, infos = env.reset()
-                episode_team_reward = 0.0
-                episode_step = 0
+            buffers[env_idx].compute_advantages_and_returns(
+                last_value=last_value,
+                gamma=gamma,
+                lam=lam,
+            )
+            buffer_tensors.append(buffers[env_idx].get_tensors())
 
-        if len(env.agents) > 0:
-            last_joint_obs = build_joint_obs(observations, agent_order)
-            last_value = agent.get_value(last_joint_obs)
-        else:
-            last_value = 0.0
+        data = {
+            "local_obs": torch.cat([x["local_obs"] for x in buffer_tensors], dim=0),
+            "joint_obs": torch.cat([x["joint_obs"] for x in buffer_tensors], dim=0),
+            "actions": torch.cat([x["actions"] for x in buffer_tensors], dim=0),
+            "log_probs": torch.cat([x["log_probs"] for x in buffer_tensors], dim=0),
+            "advantages": torch.cat([x["advantages"] for x in buffer_tensors], dim=0),
+            "returns": torch.cat([x["returns"] for x in buffer_tensors], dim=0),
+        }
 
-        buffer.compute_advantages_and_returns(
-            last_value=last_value,
-            gamma=gamma,
-            lam=lam,
-        )
+        if collected_batch_size > rollout_steps:
+            data = {
+                "local_obs": data["local_obs"][:rollout_steps],
+                "joint_obs": data["joint_obs"][:rollout_steps],
+                "actions": data["actions"][:rollout_steps],
+                "log_probs": data["log_probs"][:rollout_steps],
+                "advantages": data["advantages"][:rollout_steps],
+                "returns": data["returns"][:rollout_steps],
+            }
 
-        data = buffer.get_tensors()
+        effective_buffer_size = int(data["local_obs"].shape[0])
         update_info = agent.update(
             data,
             update_epochs=update_epochs,
@@ -339,7 +389,7 @@ def train_simple_spread_adapted(
 
         update_history.append({
             "update": update_idx,
-            "buffer_size": buffer.size(),
+            "buffer_size": effective_buffer_size,
             "actor_loss": float(update_info["actor_loss"]),
             "critic_loss": float(update_info["critic_loss"]),
             "entropy": float(update_info["entropy"]),
@@ -348,14 +398,15 @@ def train_simple_spread_adapted(
 
         print(
             f"=== Adapted PPO Update {update_idx:03d}/{total_updates} ===\n"
-            f"Buffer size: {buffer.size()} | "
+            f"Buffer size: {effective_buffer_size} | "
             f"Actor loss: {update_info['actor_loss']:.4f} | "
             f"Critic loss: {update_info['critic_loss']:.4f} | "
             f"Entropy: {update_info['entropy']:.4f} | "
             f"Avg team reward (last 10 eps): {avg_recent_team_reward:.2f}\n"
         )
 
-    env.close()
+    for env in envs:
+        env.close()
 
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     logs_dir = os.path.join(project_root, "results", "logs")
@@ -399,6 +450,8 @@ def train_simple_spread_adapted(
         "total_timesteps": total_timesteps,
         "total_updates": total_updates,
         "rollout_steps": rollout_steps,
+        "num_envs": num_envs,
+        "rollout_steps_per_env": steps_per_env,
         "max_cycles": max_cycles,
         "gamma": gamma,
         "lam": lam,
@@ -445,6 +498,7 @@ if __name__ == "__main__":
         seed=42,
         total_timesteps=1_000_000,
         rollout_steps=1024,
+        num_envs=8,
         max_cycles=25,
         gamma=0.99,
         lam=0.95,

@@ -14,6 +14,7 @@ def main():
             seed=seed,
             total_timesteps=1_000_000,
             rollout_steps=1024,
+            num_envs=8,
             max_cycles=25,
             gamma=0.99,
             lam=0.95,
