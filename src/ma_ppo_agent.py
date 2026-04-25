@@ -88,8 +88,7 @@ class MAPPOAgent:
         joint_obs_dim,
         act_dim,
         hidden_dim=64,
-        actor_lr=3e-4,
-        critic_lr=1e-3,
+        lr=3e-4,
         clip_eps=0.2,
         value_coef=0.5,
         entropy_coef=0.0,
@@ -103,8 +102,10 @@ class MAPPOAgent:
         self.actor = SharedActor(local_obs_dim, act_dim, hidden_dim).to(device)
         self.critic = CentralizedCritic(joint_obs_dim, hidden_dim).to(device)
 
-        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=actor_lr)
-        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=critic_lr)
+        self.optimizer = optim.Adam(
+            list(self.actor.parameters()) + list(self.critic.parameters()),
+            lr=lr,
+        )
 
     def select_action(self, local_obs, joint_obs):
         local_obs_tensor = torch.tensor(
@@ -196,14 +197,11 @@ class MAPPOAgent:
 
                 total_actor_loss = actor_loss - self.entropy_coef * entropy
                 total_critic_loss = self.value_coef * critic_loss
+                total_loss = total_actor_loss + total_critic_loss
 
-                self.actor_optimizer.zero_grad()
-                total_actor_loss.backward()
-                self.actor_optimizer.step()
-
-                self.critic_optimizer.zero_grad()
-                total_critic_loss.backward()
-                self.critic_optimizer.step()
+                self.optimizer.zero_grad()
+                total_loss.backward()
+                self.optimizer.step()
 
                 actor_loss_value += actor_loss.item()
                 critic_loss_value += critic_loss.item()
