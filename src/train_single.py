@@ -15,18 +15,24 @@ def set_seed(seed=42):
 def train_ppo_on_hopper(
     env_name="Hopper-v5",
     seed=42,
-    total_updates=20,
-    rollout_steps=1024,
+    total_timesteps=1_000_000,
+    rollout_steps=2048,
+    minibatch_size=64,
     gamma=0.99,
     lam=0.95,
     update_epochs=10,
     hidden_dim=64,
+    lr=3e-4,
     device="cpu",
 ):
     set_seed(seed)
 
     env = gym.make(env_name)
     obs, info = env.reset(seed=seed)
+    env.action_space.seed(seed)
+    env.observation_space.seed(seed)
+
+    total_updates = max(int(total_timesteps // rollout_steps), 1)
 
     obs_dim = env.observation_space.shape[0]
     act_dim = env.action_space.shape[0]
@@ -40,6 +46,8 @@ def train_ppo_on_hopper(
         obs_dim=obs_dim,
         act_dim=act_dim,
         hidden_dim=hidden_dim,
+        lr=lr,
+        max_grad_norm=max_grad_norm,
         device=device,
     )
 
@@ -55,8 +63,9 @@ def train_ppo_on_hopper(
 
         for step in range(rollout_steps):
             action, log_prob, value = agent.select_action(obs)
+            action_for_env = np.clip(action, env.action_space.low, env.action_space.high)
 
-            next_obs, reward, terminated, truncated, info = env.step(action)
+            next_obs, reward, terminated, truncated, info = env.step(action_for_env)
             done = terminated or truncated
 
             buffer.add(obs, action, reward, done, value, log_prob)
@@ -88,7 +97,11 @@ def train_ppo_on_hopper(
         )
 
         data = buffer.get_tensors()
-        update_info = agent.update(data, update_epochs=update_epochs)
+        update_info = agent.update(
+            data,
+            update_epochs=update_epochs,
+            minibatch_size=minibatch_size,
+        )
 
         avg_recent_reward = np.mean(reward_history[-10:]) if len(reward_history) > 0 else 0.0
 
@@ -118,17 +131,21 @@ def train_ppo_on_hopper(
     summary = {
         "env_name": env_name,
         "seed": seed,
+        "total_timesteps": total_timesteps,
         "total_updates": total_updates,
         "rollout_steps": rollout_steps,
+        "minibatch_size": minibatch_size,
         "gamma": gamma,
         "lam": lam,
         "update_epochs": update_epochs,
         "hidden_dim": hidden_dim,
+        "lr": lr,
         "device": device,
         "final_avg_reward_last_10": float(np.mean(reward_history[-10:])) if len(reward_history) > 0 else 0.0,
         "num_episodes": len(reward_history),
         "update_history": update_history,
     }
+
     save_training_summary(summary, summary_path)
 
     plot_rewards(
@@ -146,12 +163,14 @@ if __name__ == "__main__":
     rewards = train_ppo_on_hopper(
         env_name="Hopper-v5",
         seed=42,
-        total_updates=20,
-        rollout_steps=1024,
+        total_timesteps=1_000_000,
+        rollout_steps=2048,
+        minibatch_size=64,
         gamma=0.99,
         lam=0.95,
         update_epochs=10,
         hidden_dim=64,
+        lr=3e-4,
         device="cpu",
     )
 

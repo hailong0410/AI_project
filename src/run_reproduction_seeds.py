@@ -14,12 +14,14 @@ def main():
         rewards = train_ppo_on_hopper(
             env_name="Hopper-v5",
             seed=seed,
-            total_updates=20,
-            rollout_steps=1024,
+            total_timesteps=1_000_000,
+            rollout_steps=2048,
+            minibatch_size=64,
             gamma=0.99,
             lam=0.95,
             update_epochs=10,
             hidden_dim=64,
+            lr=3e-4,
             device="cpu",
         )
 

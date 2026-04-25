@@ -11,8 +11,7 @@ class PPOAgent:
         obs_dim,
         act_dim,
         hidden_dim=64,
-        actor_lr=3e-4,
-        critic_lr=1e-3,
+        lr=3e-4,
         clip_eps=0.2,
         value_coef=0.5,
         entropy_coef=0.0,
@@ -22,11 +21,14 @@ class PPOAgent:
         self.clip_eps = clip_eps
         self.value_coef = value_coef
         self.entropy_coef = entropy_coef
+        self.max_grad_norm = max_grad_norm
 
         self.ac = ActorCritic(obs_dim, act_dim, hidden_dim).to(self.device)
 
-        self.actor_optimizer = optim.Adam(self.ac.actor.parameters(), lr=actor_lr)
-        self.critic_optimizer = optim.Adam(self.ac.critic.parameters(), lr=critic_lr)
+        self.optimizer = optim.Adam(
+            list(self.ac.actor.parameters()) + list(self.ac.critic.parameters()),
+            lr=lr,
+        )
 
     def select_action(self, obs):
         """
@@ -47,11 +49,8 @@ class PPOAgent:
         log_prob = log_prob.squeeze(0)
         value = value.squeeze(0)
 
-        # Hopper action space is bounded to [-1, 1]
-        action_clipped = torch.clamp(action, -1.0, 1.0)
-
         return (
-            action_clipped.cpu().numpy(),
+            action.cpu().numpy(),
             log_prob.item(),
             value.item(),
         )
@@ -65,7 +64,7 @@ class PPOAgent:
             value = self.ac.critic(obs_tensor)
         return value.item()
 
-    def update(self, data, update_epochs=10):
+    def update(self, data, update_epochs=10, minibatch_size=64):
         """
         PPO update using collected rollout data.
 
@@ -84,39 +83,56 @@ class PPOAgent:
         actor_loss_value = 0.0
         critic_loss_value = 0.0
         entropy_value = 0.0
+        minibatch_count = 0
+
+        batch_size = obs.shape[0]
+        indices = torch.arange(batch_size, device=self.device)
 
         for _ in range(update_epochs):
-            # New log probs under current policy
-            new_log_probs = self.ac.actor.get_log_prob(obs, actions)
+            perm = indices[torch.randperm(batch_size, device=self.device)]
 
-            ratio = torch.exp(new_log_probs - old_log_probs)
+            for start in range(0, batch_size, minibatch_size):
+                mb_idx = perm[start : start + minibatch_size]
 
-            surr1 = ratio * advantages
-            surr2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * advantages
+                mb_obs = obs[mb_idx]
+                mb_actions = actions[mb_idx]
+                mb_old_log_probs = old_log_probs[mb_idx]
+                mb_advantages = advantages[mb_idx]
+                mb_returns = returns[mb_idx]
 
-            actor_loss = -torch.min(surr1, surr2).mean()
+                # New log probs under current policy
+                new_log_probs = self.ac.actor.get_log_prob(mb_obs, mb_actions)
 
-            values = self.ac.critic(obs)
-            critic_loss = nn.MSELoss()(values, returns)
+                ratio = torch.exp(new_log_probs - mb_old_log_probs)
 
-            entropy = self.ac.actor.get_entropy(obs).mean()
+                surr1 = ratio * mb_advantages
+                surr2 = (
+                    torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps)
+                    * mb_advantages
+                )
 
-            total_actor_loss = actor_loss - self.entropy_coef * entropy
-            total_critic_loss = self.value_coef * critic_loss
+                actor_loss = -torch.min(surr1, surr2).mean()
 
-            self.actor_optimizer.zero_grad()
-            total_actor_loss.backward()
-            self.actor_optimizer.step()
+                values = self.ac.critic(mb_obs)
+                critic_loss = nn.MSELoss()(values, mb_returns)
 
-            self.critic_optimizer.zero_grad()
-            total_critic_loss.backward()
-            self.critic_optimizer.step()
+                entropy = self.ac.actor.get_entropy(mb_obs).mean()
 
-            actor_loss_value += actor_loss.item()
-            critic_loss_value += critic_loss.item()
-            entropy_value += entropy.item()
+                total_actor_loss = actor_loss - self.entropy_coef * entropy
+                total_critic_loss = self.value_coef * critic_loss
 
-        num_updates = update_epochs
+                total_loss = total_actor_loss + total_critic_loss
+
+                self.optimizer.zero_grad()
+                total_loss.backward()
+                self.optimizer.step()
+
+                actor_loss_value += actor_loss.item()
+                critic_loss_value += critic_loss.item()
+                entropy_value += entropy.item()
+                minibatch_count += 1
+
+        num_updates = max(minibatch_count, 1)
         return {
             "actor_loss": actor_loss_value / num_updates,
             "critic_loss": critic_loss_value / num_updates,
