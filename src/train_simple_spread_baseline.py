@@ -77,7 +77,7 @@ def evaluate_simple_spread_baseline_deterministic(
 def train_simple_spread_baseline(
     seed=42,
     total_timesteps=1_000_000,
-    rollout_steps=1024,
+    rollout_steps=2048,
     num_envs=1,
     max_cycles=25,
     gamma=0.99,
@@ -116,13 +116,16 @@ def train_simple_spread_baseline(
         observations_list.append(observations)
         infos_list.append(infos)
 
-    total_updates = max(int(total_timesteps // rollout_steps), 1)
-    steps_per_env = math.ceil(rollout_steps / num_envs)
-    collected_batch_size = steps_per_env * num_envs
-
     ref_env = envs[0]
     agents = ref_env.agents
+    num_agents = len(agents)
     first_agent = agents[0]
+
+    total_updates = max(int(total_timesteps // rollout_steps), 1)
+    # In this multi-agent setup each env step contributes one sample per agent.
+    # Scale per-env rollout length so each update targets rollout_steps transitions.
+    steps_per_env = math.ceil(rollout_steps / (num_envs * num_agents))
+    collected_batch_size = steps_per_env * num_envs * num_agents
 
     obs_dim = ref_env.observation_space(first_agent).shape[0]
     act_dim = ref_env.action_space(first_agent).shape[0]
@@ -131,9 +134,11 @@ def train_simple_spread_baseline(
     print("Agents:", agents)
     print("Observation dim:", obs_dim)
     print("Action dim:", act_dim)
+    print("Num agents:", num_agents)
     print("Num envs:", num_envs)
     print("Rollout steps per update (effective):", rollout_steps)
     print("Rollout steps per env:", steps_per_env)
+    print("Agent-level samples collected per update:", collected_batch_size)
     print("Device:", device)
 
     # Shared PPO agent used by all environment agents
@@ -338,7 +343,7 @@ def train_simple_spread_baseline(
         "method": "naive_shared_policy_ppo_baseline",
         "environment": "MPE2 Simple Spread",
         "seed": seed,
-        "num_agents": 3,
+        "num_agents": num_agents,
         "obs_dim": obs_dim,
         "act_dim": act_dim,
         "total_timesteps": total_timesteps,
@@ -346,6 +351,7 @@ def train_simple_spread_baseline(
         "rollout_steps": rollout_steps,
         "num_envs": num_envs,
         "rollout_steps_per_env": steps_per_env,
+        "collected_agent_samples_per_update": collected_batch_size,
         "max_cycles": max_cycles,
         "gamma": gamma,
         "lam": lam,
@@ -391,7 +397,7 @@ if __name__ == "__main__":
     train_simple_spread_baseline(
         seed=42,
         total_timesteps=1_000_000,
-        rollout_steps=1024,
+        rollout_steps=2048,
         num_envs=8,
         max_cycles=25,
         gamma=0.99,

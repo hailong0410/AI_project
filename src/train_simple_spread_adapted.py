@@ -177,7 +177,7 @@ def build_joint_obs(observations, agent_order):
 def train_simple_spread_adapted(
     seed=42,
     total_timesteps=1_000_000,
-    rollout_steps=1024,
+    rollout_steps=2048,
     num_envs=1,
     max_cycles=25,
     gamma=0.99,
@@ -216,17 +216,20 @@ def train_simple_spread_adapted(
         infos_list.append(infos)
         agent_orders.append(list(env.agents))
 
-    total_updates = max(int(total_timesteps // rollout_steps), 1)
-    steps_per_env = math.ceil(rollout_steps / num_envs)
-    collected_batch_size = steps_per_env * num_envs
-
     ref_env = envs[0]
     agent_order = agent_orders[0]
+    num_agents = len(agent_order)
     first_agent = agent_order[0]
+
+    total_updates = max(int(total_timesteps // rollout_steps), 1)
+    # In this multi-agent setup each env step contributes one sample per agent.
+    # Scale per-env rollout length so each update targets rollout_steps transitions.
+    steps_per_env = math.ceil(rollout_steps / (num_envs * num_agents))
+    collected_batch_size = steps_per_env * num_envs * num_agents
 
     local_obs_dim = ref_env.observation_space(first_agent).shape[0]
     act_dim = ref_env.action_space(first_agent).shape[0]
-    joint_obs_dim = local_obs_dim * len(agent_order)
+    joint_obs_dim = local_obs_dim * num_agents
 
     print("Environment: MPE2 Simple Spread")
     print("Method: Shared actor + centralized critic")
@@ -234,9 +237,11 @@ def train_simple_spread_adapted(
     print("Local observation dim:", local_obs_dim)
     print("Joint observation dim:", joint_obs_dim)
     print("Action dim:", act_dim)
+    print("Num agents:", num_agents)
     print("Num envs:", num_envs)
     print("Rollout steps per update (effective):", rollout_steps)
     print("Rollout steps per env:", steps_per_env)
+    print("Agent-level samples collected per update:", collected_batch_size)
     print("Device:", device)
 
     agent = MAPPOAgent(
@@ -452,6 +457,7 @@ def train_simple_spread_adapted(
         "rollout_steps": rollout_steps,
         "num_envs": num_envs,
         "rollout_steps_per_env": steps_per_env,
+        "collected_agent_samples_per_update": collected_batch_size,
         "max_cycles": max_cycles,
         "gamma": gamma,
         "lam": lam,
@@ -497,7 +503,7 @@ if __name__ == "__main__":
     train_simple_spread_adapted(
         seed=42,
         total_timesteps=1_000_000,
-        rollout_steps=1024,
+        rollout_steps=2048,
         num_envs=8,
         max_cycles=25,
         gamma=0.99,

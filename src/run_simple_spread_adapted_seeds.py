@@ -13,7 +13,7 @@ def main():
         summary = train_simple_spread_adapted(
             seed=seed,
             total_timesteps=1_000_000,
-            rollout_steps=1024,
+            rollout_steps=2048,
             num_envs=8,
             max_cycles=25,
             gamma=0.99,
