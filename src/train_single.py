@@ -4,7 +4,12 @@ import numpy as np
 import torch
 
 from ppo_agent import PPOAgent
-from utils import save_rewards_to_json, save_training_summary, plot_rewards
+from utils import (
+    evaluate_deterministic_policy,
+    save_rewards_to_json,
+    save_training_summary,
+    plot_rewards,
+)
 
 
 def set_seed(seed=42):
@@ -38,6 +43,7 @@ def train_ppo_on_hopper(
     update_epochs=10,
     hidden_dim=64,
     lr=3e-4,
+    eval_episodes=20,
     device="cpu",
 ):
     set_seed(seed)
@@ -204,6 +210,14 @@ def train_ppo_on_hopper(
 
     save_rewards_to_json(reward_history, rewards_path)
 
+    eval_result = evaluate_deterministic_policy(
+        actor_critic=agent.ac,
+        env_name=env_name,
+        seed=seed,
+        episodes=eval_episodes,
+        device=torch_device,
+    )
+
     summary = {
         "env_name": env_name,
         "seed": seed,
@@ -218,8 +232,12 @@ def train_ppo_on_hopper(
         "update_epochs": update_epochs,
         "hidden_dim": hidden_dim,
         "lr": lr,
+        "eval_episodes": eval_episodes,
         "device": device,
         "final_avg_reward_last_10": float(np.mean(reward_history[-10:])) if len(reward_history) > 0 else 0.0,
+        "final_eval_mean_return": eval_result["mean_return"],
+        "final_eval_std_return": eval_result["std_return"],
+        "final_eval_returns": eval_result["returns"],
         "num_episodes": len(reward_history),
         "update_history": update_history,
     }
@@ -234,11 +252,11 @@ def train_ppo_on_hopper(
     )
 
     envs.close()
-    return reward_history
+    return summary
 
 
 if __name__ == "__main__":
-    rewards = train_ppo_on_hopper(
+    summary = train_ppo_on_hopper(
         env_name="Hopper-v5",
         seed=42,
         total_timesteps=1_000_000,
@@ -250,10 +268,13 @@ if __name__ == "__main__":
         update_epochs=10,
         hidden_dim=64,
         lr=3e-4,
+        eval_episodes=20,
         device="cpu",
     )
 
     print("Training finished.")
-    if len(rewards) > 0:
-        print("Final average reward over last 10 episodes:", np.mean(rewards[-10:]))
-        print("Saved reward logs and plot to results folder.")
+    print(
+        "Final deterministic evaluation mean return:",
+        f"{summary['final_eval_mean_return']:.2f}",
+    )
+    print("Saved reward logs and plot to results folder.")

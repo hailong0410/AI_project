@@ -22,7 +22,7 @@ def main():
     for seed in seeds:
         path = os.path.join(logs_dir, f"hopper_summary_seed_{seed}.json")
         data = load_json(path)
-        hopper_scores.append(data["final_avg_reward_last_10"])
+        hopper_scores.append(data.get("final_eval_mean_return", data["final_avg_reward_last_10"]))
 
     hopper_mean = np.mean(hopper_scores)
     hopper_std = np.std(hopper_scores)
@@ -87,7 +87,7 @@ def main():
 
         f.write("Hopper-v5 Results:\n")
         for seed, score in zip(seeds, hopper_scores):
-            f.write(f"Seed {seed}: Final average reward last 10 episodes = {score:.2f}\n")
+            f.write(f"Seed {seed}: Final deterministic evaluation mean return = {score:.2f}\n")
 
         f.write(f"\nMean: {hopper_mean:.2f}\n")
         f.write(f"Std: {hopper_std:.2f}\n\n")

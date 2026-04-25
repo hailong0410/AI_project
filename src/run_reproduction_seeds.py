@@ -1,4 +1,3 @@
-import numpy as np
 from train_single import train_ppo_on_hopper
 
 
@@ -11,7 +10,7 @@ def main():
         print(f"Starting reproduction run for seed = {seed}")
         print("=" * 70)
 
-        rewards = train_ppo_on_hopper(
+        summary = train_ppo_on_hopper(
             env_name="Hopper-v5",
             seed=seed,
             total_timesteps=1_000_000,
@@ -23,19 +22,22 @@ def main():
             update_epochs=10,
             hidden_dim=64,
             lr=3e-4,
+            eval_episodes=20,
             device="cpu",
         )
 
-        final_avg = float(np.mean(rewards[-10:])) if len(rewards) > 0 else 0.0
+        final_eval_mean = float(summary["final_eval_mean_return"])
+        final_eval_std = float(summary["final_eval_std_return"])
 
         final_results.append({
             "seed": seed,
-            "num_episodes": len(rewards),
-            "final_avg_reward_last_10": final_avg,
+            "num_episodes": int(summary["num_episodes"]),
+            "final_eval_mean_return": final_eval_mean,
+            "final_eval_std_return": final_eval_std,
         })
 
         print(f"Finished seed {seed}")
-        print(f"Final average reward over last 10 episodes: {final_avg:.2f}")
+        print(f"Final deterministic eval mean return (20 eps): {final_eval_mean:.2f}")
 
     print("\n" + "=" * 70)
     print("All reproduction runs finished.")
@@ -45,7 +47,8 @@ def main():
         print(
             f"Seed {item['seed']} | "
             f"Episodes: {item['num_episodes']} | "
-            f"Final avg reward (last 10): {item['final_avg_reward_last_10']:.2f}"
+            f"Final deterministic eval mean: {item['final_eval_mean_return']:.2f} | "
+            f"Eval std: {item['final_eval_std_return']:.2f}"
         )
 
 
